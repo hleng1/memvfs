@@ -14,7 +14,7 @@ func TestMemvfs(t *testing.T) {
 	store := memvfs.NewMemStore()
 
 	// TODO use New()
-	memVFS := &memvfs.BufferVFS{
+	memVFS := &memvfs.MemVFS{
 		Name:  "memvfs",
 		Store: store,
 	}
