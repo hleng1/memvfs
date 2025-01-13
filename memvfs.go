@@ -9,30 +9,25 @@ import (
 	"github.com/psanford/sqlite3vfs"
 )
 
-type MemStore struct {
+type MemVFS struct {
 	mu    sync.Mutex
 	files map[string]*bytes.Buffer
 }
 
-type MemVFS struct {
-	Name  string
-	Store *MemStore
-}
-
 type MemFile struct {
-	store     *MemStore
+	store     *MemVFS
 	fileName  string
 	lockLevel sqlite3vfs.LockType
 	mu        sync.Mutex
 }
 
-func NewMemStore() *MemStore {
-	return &MemStore{
+func New() *MemVFS {
+	return &MemVFS{
 		files: make(map[string]*bytes.Buffer),
 	}
 }
 
-func (s *MemStore) getFile(fileName string) *bytes.Buffer {
+func (s *MemVFS) getFile(fileName string) *bytes.Buffer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	buf, ok := s.files[fileName]
@@ -146,16 +141,16 @@ func (v *MemVFS) FullPathname(name string) string {
 
 func (v *MemVFS) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, sqlite3vfs.OpenFlag, error) {
 	return &MemFile{
-		store:    v.Store,
+		store:    v,
 		fileName: name,
 	}, flags, nil
 }
 
 func (v *MemVFS) Delete(name string, syncDir bool) error {
-	v.Store.mu.Lock()
-	defer v.Store.mu.Unlock()
-	if _, ok := v.Store.files[name]; ok {
-		delete(v.Store.files, name)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if _, ok := v.files[name]; ok {
+		delete(v.files, name)
 		return nil
 	}
 
@@ -163,9 +158,9 @@ func (v *MemVFS) Delete(name string, syncDir bool) error {
 }
 
 func (v *MemVFS) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
-	v.Store.mu.Lock()
-	defer v.Store.mu.Unlock()
-	_, ok := v.Store.files[name]
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	_, ok := v.files[name]
 
 	return ok, nil
 }

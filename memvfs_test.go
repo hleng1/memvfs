@@ -11,15 +11,9 @@ import (
 )
 
 func TestMemvfs(t *testing.T) {
-	store := memvfs.NewMemStore()
+	v := memvfs.New()
 
-	// TODO use New()
-	memVFS := &memvfs.MemVFS{
-		Name:  "memvfs",
-		Store: store,
-	}
-
-	if err := sqlite3vfs.RegisterVFS("memvfs", memVFS); err != nil {
+	if err := sqlite3vfs.RegisterVFS("memvfs", v); err != nil {
 		t.Fatalf("Failed to register VFS: %v", err)
 	}
 
@@ -53,14 +47,14 @@ func TestMemvfs(t *testing.T) {
 	}
 	t.Logf("Got row: id=%d data=%q\n", id, data)
 
-	_, err = memVFS.Access("test.db", sqlite3vfs.AccessExists)
+	_, err = v.Access("test.db", sqlite3vfs.AccessExists)
 	if err != nil {
 		t.Logf("Failed to access %v: %v\n", "test.db", err)
 	}
 
 	// TODO more tests like https://github.com/psanford/donutdb/blob/main/donutdb_test.go
 
-	if err := memVFS.Delete("test.db", true); err != nil {
+	if err := v.Delete("test.db", true); err != nil {
 		t.Fatalf("Failed to delete test.db: %v", err)
 	}
 }
