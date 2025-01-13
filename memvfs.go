@@ -27,7 +27,7 @@ func New() *MemVFS {
 	}
 }
 
-func (v *MemVFS) getFile(fileName string) *bytes.Buffer {
+func (v *MemVFS) GetFile(fileName string) *bytes.Buffer {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	buf, ok := v.files[fileName]
@@ -42,7 +42,7 @@ func (f *MemFile) ReadAt(p []byte, off int64) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	buf := f.store.getFile(f.fileName)
+	buf := f.store.GetFile(f.fileName)
 	if off >= int64(buf.Len()) {
 		return 0, io.EOF
 	}
@@ -61,7 +61,7 @@ func (f *MemFile) WriteAt(p []byte, off int64) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	fileBuf := f.store.getFile(f.fileName)
+	fileBuf := f.store.GetFile(f.fileName)
 
 	currLen := int64(fileBuf.Len())
 	if off > currLen {
@@ -83,7 +83,7 @@ func (f *MemFile) Truncate(size int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	buf := f.store.getFile(f.fileName)
+	buf := f.store.GetFile(f.fileName)
 	currentLen := int64(buf.Len())
 	if size < currentLen {
 		buf.Truncate(int(size))
@@ -101,7 +101,7 @@ func (f *MemFile) Sync(flags sqlite3vfs.SyncType) error {
 func (f *MemFile) FileSize() (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	buf := f.store.getFile(f.fileName)
+	buf := f.store.GetFile(f.fileName)
 	return int64(buf.Len()), nil
 }
 
