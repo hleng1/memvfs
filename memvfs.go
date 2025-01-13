@@ -27,22 +27,22 @@ func New() *MemVFS {
 	}
 }
 
-func (s *MemVFS) getFile(fileName string) *bytes.Buffer {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	buf, ok := s.files[fileName]
+func (v *MemVFS) getFile(fileName string) *bytes.Buffer {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	buf, ok := v.files[fileName]
 	if !ok {
 		buf = new(bytes.Buffer)
-		s.files[fileName] = buf
+		v.files[fileName] = buf
 	}
 	return buf
 }
 
-func (bf *MemFile) ReadAt(p []byte, off int64) (n int, err error) {
-	bf.mu.Lock()
-	defer bf.mu.Unlock()
+func (f *MemFile) ReadAt(p []byte, off int64) (n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
-	buf := bf.store.getFile(bf.fileName)
+	buf := f.store.getFile(f.fileName)
 	if off >= int64(buf.Len()) {
 		return 0, io.EOF
 	}
@@ -57,11 +57,11 @@ func (bf *MemFile) ReadAt(p []byte, off int64) (n int, err error) {
 	return n, err
 }
 
-func (bf *MemFile) WriteAt(p []byte, off int64) (n int, err error) {
-	bf.mu.Lock()
-	defer bf.mu.Unlock()
+func (f *MemFile) WriteAt(p []byte, off int64) (n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
-	fileBuf := bf.store.getFile(bf.fileName)
+	fileBuf := f.store.getFile(f.fileName)
 
 	currLen := int64(fileBuf.Len())
 	if off > currLen {
@@ -79,11 +79,11 @@ func (bf *MemFile) WriteAt(p []byte, off int64) (n int, err error) {
 	return len(p), nil
 }
 
-func (bf *MemFile) Truncate(size int64) error {
-	bf.mu.Lock()
-	defer bf.mu.Unlock()
+func (f *MemFile) Truncate(size int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
-	buf := bf.store.getFile(bf.fileName)
+	buf := f.store.getFile(f.fileName)
 	currentLen := int64(buf.Len())
 	if size < currentLen {
 		buf.Truncate(int(size))
@@ -94,44 +94,44 @@ func (bf *MemFile) Truncate(size int64) error {
 	return nil
 }
 
-func (bf *MemFile) Sync(flags sqlite3vfs.SyncType) error {
+func (f *MemFile) Sync(flags sqlite3vfs.SyncType) error {
 	return nil
 }
 
-func (bf *MemFile) FileSize() (int64, error) {
-	bf.mu.Lock()
-	defer bf.mu.Unlock()
-	buf := bf.store.getFile(bf.fileName)
+func (f *MemFile) FileSize() (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	buf := f.store.getFile(f.fileName)
 	return int64(buf.Len()), nil
 }
 
 // TODO
-func (bf *MemFile) Lock(lockType sqlite3vfs.LockType) error {
-	if bf.lockLevel < lockType {
-		bf.lockLevel = lockType
+func (f *MemFile) Lock(lockType sqlite3vfs.LockType) error {
+	if f.lockLevel < lockType {
+		f.lockLevel = lockType
 	}
 	return nil
 }
 
 // TODO
-func (bf *MemFile) Unlock(lockType sqlite3vfs.LockType) error {
+func (f *MemFile) Unlock(lockType sqlite3vfs.LockType) error {
 	return nil
 }
 
 // TODO
-func (bf *MemFile) CheckReservedLock() (bool, error) {
-	return bf.lockLevel >= sqlite3vfs.LockReserved, nil
+func (f *MemFile) CheckReservedLock() (bool, error) {
+	return f.lockLevel >= sqlite3vfs.LockReserved, nil
 }
 
-func (bf *MemFile) SectorSize() int64 {
+func (f *MemFile) SectorSize() int64 {
 	return 512
 }
 
-func (bf *MemFile) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
+func (f *MemFile) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
 	return 0
 }
 
-func (bf *MemFile) Close() error {
+func (f *MemFile) Close() error {
 	return nil
 }
 
