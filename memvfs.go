@@ -129,6 +129,8 @@ func (f *MemFile) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
 	return 0
 }
 
+// Close guarantees that the buffer is freed on db.Close() in consistency with
+// in-memory sqlite db behavior.
 func (f *MemFile) Close() error {
 	return f.store.Delete(f.fileName, true)
 }
@@ -160,7 +162,10 @@ func (v *MemVFS) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
 	defer v.mu.Unlock()
 	_, ok := v.files[name]
 
-	return ok, nil
+	if ok {
+		return ok, nil
+	}
+	return ok, sqlite3vfs.NotFoundError
 }
 
 func (v *MemVFS) FullPathName(name string) (string, error) {
