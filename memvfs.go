@@ -2,6 +2,7 @@ package memvfs
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"sync"
 
@@ -27,7 +28,9 @@ func New() *MemVFS {
 	}
 }
 
-func (v *MemVFS) GetFile(fileName string) *bytes.Buffer {
+// getFile returns an existing buffer for the given fileName
+// or creates a new buffer if it doesn’t exist yet.
+func (v *MemVFS) getFile(fileName string) *bytes.Buffer {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	buf, ok := v.files[fileName]
@@ -38,11 +41,23 @@ func (v *MemVFS) GetFile(fileName string) *bytes.Buffer {
 	return buf
 }
 
+func (v *MemVFS) GetFile(fileName string) ([]byte, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	buf, ok := v.files[fileName]
+	if !ok {
+		return nil, errors.New("file not found in memvfs")
+	}
+
+	return buf.Bytes(), nil
+}
+
 func (f *MemFile) ReadAt(p []byte, off int64) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	buf := f.store.GetFile(f.fileName)
+	buf := f.store.getFile(f.fileName)
 	if off >= int64(buf.Len()) {
 		return 0, io.EOF
 	}
@@ -61,7 +76,7 @@ func (f *MemFile) WriteAt(p []byte, off int64) (n int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	fileBuf := f.store.GetFile(f.fileName)
+	fileBuf := f.store.getFile(f.fileName)
 
 	currLen := int64(fileBuf.Len())
 	if off > currLen {
@@ -83,7 +98,7 @@ func (f *MemFile) Truncate(size int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	buf := f.store.GetFile(f.fileName)
+	buf := f.store.getFile(f.fileName)
 	currentLen := int64(buf.Len())
 	if size < currentLen {
 		buf.Truncate(int(size))
@@ -101,7 +116,7 @@ func (f *MemFile) Sync(flags sqlite3vfs.SyncType) error {
 func (f *MemFile) FileSize() (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	buf := f.store.GetFile(f.fileName)
+	buf := f.store.getFile(f.fileName)
 	return int64(buf.Len()), nil
 }
 
@@ -157,15 +172,17 @@ func (v *MemVFS) Delete(name string, syncDir bool) error {
 	return nil
 }
 
+// Access tests for access permission. Returns true if the requested permission
+// is available. An error is returned only if the file's existance cannot be determined.
+//
+// https://github.com/psanford/sqlite3vfs/blob/24e1d98cf361/sqlite3vfscgo.go#L85C20-L87C53
+// https://www.sqlite.org/c3ref/c_access_exists.html
 func (v *MemVFS) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	_, ok := v.files[name]
 
-	if ok {
-		return ok, nil
-	}
-	return ok, sqlite3vfs.NotFoundError
+	return ok, nil
 }
 
 func (v *MemVFS) FullPathName(name string) (string, error) {
