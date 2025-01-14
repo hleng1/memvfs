@@ -3,6 +3,8 @@ package memvfs_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/hleng1/memvfs"
@@ -56,5 +58,78 @@ func TestMemvfs(t *testing.T) {
 
 	if err := v.Delete("test.db", true); err != nil {
 		t.Fatalf("Failed to delete test.db: %v", err)
+	}
+}
+
+func TestConcurrentInsert(t *testing.T) {
+	const (
+		goroutineCount = 10
+		iterations     = 100
+	)
+
+	v := memvfs.New()
+
+	if err := sqlite3vfs.RegisterVFS("memvfs", v); err != nil {
+		t.Fatalf("Failed to register VFS: %v", err)
+	}
+
+	db, err := sql.Open("sqlite3", "file:test_concurrent.db?&vfs=memvfs&cache=shared&mode=memory")
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS test (
+            id INTEGER PRIMARY KEY,
+            value TEXT
+        )
+    `)
+	if err != nil {
+		t.Fatalf("Create table error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(goroutineCount)
+
+	for i := 0; i < goroutineCount; i++ {
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				_, err := db.Exec(`INSERT INTO test(value) VALUES(?)`,
+					fmt.Sprintf("goroutine %d iteration %d", id, j))
+				if err != nil {
+					t.Errorf("Insert error: %v", err)
+					return
+				}
+
+				/*
+					SELECT query here causes SQLITE_LOCKED (6)
+					https://www2.sqlite.org/cvstrac/wiki?p=DatabaseIsLocked
+
+					https://github.com/mattn/go-sqlite3/issues/148#issuecomment-250905756
+
+					var count int
+					err = db.QueryRow(`SELECT COUNT(*) FROM test`).Scan(&count)
+					if err != nil {
+						t.Errorf("Query error: %v", err)
+						return
+					}
+				*/
+
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	var total int
+	err = db.QueryRow(`SELECT COUNT(*) FROM test`).Scan(&total)
+	if err != nil {
+		t.Errorf("Final count query error: %v", err)
+	}
+	expected := goroutineCount * iterations
+	if total != expected {
+		t.Errorf("expected %d rows, got %d", expected, total)
 	}
 }
