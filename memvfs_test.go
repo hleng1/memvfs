@@ -29,7 +29,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestMemVFS(t *testing.T) {
-	db, err := sql.Open("sqlite3", "file:test.db?vfs=memvfs&cache=shared&mode=memory")
+	dbName := "test.db"
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?vfs=memvfs&cache=shared", dbName))
 	if err != nil {
 		t.Fatalf("Failed to open DB: %v", err)
 	}
@@ -58,9 +59,15 @@ func TestMemVFS(t *testing.T) {
 	}
 	t.Logf("Got row: id=%d data=%q\n", id, data)
 
-	_, err = v.Access("test.db", sqlite3vfs.AccessExists)
+	buf, err := v.GetFile(dbName)
 	if err != nil {
-		t.Logf("Failed to access %v: %v\n", "test.db", err)
+		t.Error(err)
+	}
+	t.Log("Got buffer length:", len(buf))
+
+	ok, _ := v.Access(dbName, sqlite3vfs.AccessExists)
+	if !ok {
+		t.Fatalf("Failed to access %v: %v\n", dbName, err)
 	}
 
 	// TODO more tests like https://github.com/psanford/donutdb/blob/main/donutdb_test.go
@@ -69,22 +76,22 @@ func TestMemVFS(t *testing.T) {
 
 	_, err = db.ExecContext(ctx, `INSERT INTO demo(data) VALUES ('Hello again from memvfs')`)
 	if err == nil {
-		t.Fatalf("%v should not allow insertion after Close: %v", "test.db", err)
+		t.Fatalf("%v should not allow insertion after Close: %v", dbName, err)
 	}
 
-	_, err = v.Access("test.db", sqlite3vfs.AccessExists)
-	if err == nil {
-		t.Fatalf("%v is still accessible after Close: %v", "test.db", err)
+	ok, _ = v.Access(dbName, sqlite3vfs.AccessExists)
+	if ok {
+		t.Fatalf("%v is still accessible after Close: %v", dbName, err)
 	}
 }
 
-func TestConcurrentInsert(t *testing.T) {
+func TestConcurrentSingleDB(t *testing.T) {
 	const (
 		goroutineCount = 10
 		iterations     = 100
 	)
 
-	db, err := sql.Open("sqlite3", "file:test_concurrent.db?&vfs=memvfs&cache=shared&mode=memory")
+	db, err := sql.Open("sqlite3", "file:test_concurrent.db?&vfs=memvfs&cache=shared")
 	if err != nil {
 		t.Fatalf("Failed to open DB: %v", err)
 	}
@@ -137,10 +144,60 @@ func TestConcurrentInsert(t *testing.T) {
 	var total int
 	err = db.QueryRow(`SELECT COUNT(*) FROM test`).Scan(&total)
 	if err != nil {
-		t.Errorf("Final count query error: %v", err)
+		t.Fatalf("Final count query error: %v", err)
 	}
 	expected := goroutineCount * iterations
 	if total != expected {
-		t.Errorf("expected %d rows, got %d", expected, total)
+		t.Fatalf("Expected %d rows, got %d", expected, total)
 	}
+}
+
+func TestConcurrentMultiDB(t *testing.T) {
+	const (
+		goroutineCount = 20
+		iterations     = 100
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(goroutineCount)
+
+	for i := 0; i < goroutineCount; i++ {
+		go func(id int) {
+			defer wg.Done()
+			dbName := fmt.Sprintf("test_concurrent_%2d.db", i)
+			db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?&vfs=memvfs&cache=shared", dbName))
+			if err != nil {
+				t.Errorf("Failed to open DB: %v", err)
+			}
+			defer db.Close()
+
+			_, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS test (
+            id INTEGER PRIMARY KEY,
+            value TEXT
+        )
+    `)
+			if err != nil {
+				t.Errorf("Create table error: %v", err)
+			}
+			for j := 0; j < iterations; j++ {
+				_, err := db.Exec(`INSERT INTO test(value) VALUES(?)`,
+					fmt.Sprintf("goroutine %d iteration %d", id, j))
+				if err != nil {
+					t.Errorf("Insert error: %v", err)
+					return
+				}
+			}
+			var total int
+			err = db.QueryRow(`SELECT COUNT(*) FROM test`).Scan(&total)
+			if err != nil {
+				t.Errorf("Final count query error: %v", err)
+			}
+			if total != iterations {
+				t.Errorf("Expected %d rows, got %d", iterations, total)
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }
