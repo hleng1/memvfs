@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 	"testing"
 
@@ -12,18 +14,25 @@ import (
 	"github.com/psanford/sqlite3vfs"
 )
 
-func TestMemvfs(t *testing.T) {
-	v := memvfs.New()
+var v *memvfs.MemVFS
+
+func TestMain(m *testing.M) {
+	v = memvfs.New()
 
 	if err := sqlite3vfs.RegisterVFS("memvfs", v); err != nil {
-		t.Fatalf("Failed to register VFS: %v", err)
+		log.Fatalf("Failed to register VFS: %v", err)
 	}
 
+	code := m.Run()
+
+	os.Exit(code)
+}
+
+func TestMemVFS(t *testing.T) {
 	db, err := sql.Open("sqlite3", "file:test.db?vfs=memvfs&cache=shared&mode=memory")
 	if err != nil {
 		t.Fatalf("Failed to open DB: %v", err)
 	}
-	defer db.Close()
 
 	ctx := context.Background()
 	_, err = db.ExecContext(ctx, `
@@ -56,8 +65,16 @@ func TestMemvfs(t *testing.T) {
 
 	// TODO more tests like https://github.com/psanford/donutdb/blob/main/donutdb_test.go
 
-	if err := v.Delete("test.db", true); err != nil {
-		t.Fatalf("Failed to delete test.db: %v", err)
+	db.Close()
+
+	_, err = db.ExecContext(ctx, `INSERT INTO demo(data) VALUES ('Hello again from memvfs')`)
+	if err == nil {
+		t.Fatalf("%v should not allow insertion after Close: %v", "test.db", err)
+	}
+
+	_, err = v.Access("test.db", sqlite3vfs.AccessExists)
+	if err == nil {
+		t.Fatalf("%v is still accessible after Close: %v", "test.db", err)
 	}
 }
 
@@ -66,12 +83,6 @@ func TestConcurrentInsert(t *testing.T) {
 		goroutineCount = 10
 		iterations     = 100
 	)
-
-	v := memvfs.New()
-
-	if err := sqlite3vfs.RegisterVFS("memvfs", v); err != nil {
-		t.Fatalf("Failed to register VFS: %v", err)
-	}
 
 	db, err := sql.Open("sqlite3", "file:test_concurrent.db?&vfs=memvfs&cache=shared&mode=memory")
 	if err != nil {
