@@ -105,7 +105,6 @@ func (f *MemFile) FileSize() (int64, error) {
 	return int64(buf.Len()), nil
 }
 
-// TODO
 func (f *MemFile) Lock(lockType sqlite3vfs.LockType) error {
 	if f.lockLevel < lockType {
 		f.lockLevel = lockType
@@ -113,12 +112,11 @@ func (f *MemFile) Lock(lockType sqlite3vfs.LockType) error {
 	return nil
 }
 
-// TODO
 func (f *MemFile) Unlock(lockType sqlite3vfs.LockType) error {
+	f.lockLevel = lockType
 	return nil
 }
 
-// TODO
 func (f *MemFile) CheckReservedLock() (bool, error) {
 	return f.lockLevel >= sqlite3vfs.LockReserved, nil
 }
@@ -131,6 +129,7 @@ func (f *MemFile) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
 	return 0
 }
 
+// TODO
 func (f *MemFile) Close() error {
 	return nil
 }
