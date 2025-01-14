@@ -129,9 +129,8 @@ func (f *MemFile) DeviceCharacteristics() sqlite3vfs.DeviceCharacteristic {
 	return 0
 }
 
-// TODO
 func (f *MemFile) Close() error {
-	return nil
+	return f.store.Delete(f.fileName, true)
 }
 
 func (v *MemVFS) FullPathname(name string) string {
