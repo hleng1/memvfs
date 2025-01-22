@@ -3,7 +3,6 @@ package memvfs
 import (
 	"bytes"
 	"errors"
-	"io"
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -53,23 +52,37 @@ func (v *MemVFS) GetFile(fileName string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (f *MemFile) ReadAt(p []byte, off int64) (n int, err error) {
+func (f *MemFile) ReadAt(p []byte, off int64) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	buf := f.store.getFile(f.fileName)
-	if off >= int64(buf.Len()) {
-		return 0, io.EOF
+	fileLen := int64(buf.Len())
+
+	// If xRead() returns SQLITE_IOERR_SHORT_READ it must also fill in the
+	// unread portions of the buffer with zeros. A VFS that fails to
+	// zero-fill short reads might seem to work. However, failure to
+	// zero-fill short reads will eventually lead to database corruption.
+	//
+	// https://www.sqlite.org/c3ref/io_methods.html
+	if off >= fileLen {
+		for i := range p {
+			p[i] = 0
+		}
+		return len(p), sqlite3vfs.IOErrorShortRead
 	}
 
-	tmp := bytes.NewReader(buf.Bytes())
-	_, err = tmp.Seek(off, io.SeekStart)
-	if err != nil {
-		return 0, err
+	maxReadable := fileLen - off
+	if int64(len(p)) > maxReadable {
+		n := copy(p, buf.Bytes()[off:])
+		for i := n; i < len(p); i++ {
+			p[i] = 0
+		}
+		return len(p), sqlite3vfs.IOErrorShortRead
 	}
 
-	n, err = tmp.Read(p)
-	return n, err
+	n := copy(p, buf.Bytes()[off:off+int64(len(p))])
+	return n, nil
 }
 
 func (f *MemFile) WriteAt(p []byte, off int64) (n int, err error) {
