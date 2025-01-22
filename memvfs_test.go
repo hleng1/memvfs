@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"sync"
 	"testing"
@@ -200,4 +201,54 @@ func TestConcurrentMultiDB(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestStressInsertion(t *testing.T) {
+	const (
+		iterations = 40000
+		seqLen     = 200
+	)
+	dbName := "test-stress-insertion.db"
+	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?vfs=memvfs&cache=shared", dbName))
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+
+	ctx := context.Background()
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS demo (
+			id INTEGER PRIMARY KEY,
+			data TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Create table error: %v", err)
+	}
+
+	for i := 0; i < iterations; i++ {
+		_, err = db.ExecContext(ctx, `INSERT INTO demo(data) VALUES (?)`, randSeq(seqLen))
+		dbBytes, _ := v.GetFile(dbName)
+		if err != nil {
+			t.Fatalf("Insert error at iteration %v: len=%v %v\n%v", i, len(dbBytes), err, v)
+		}
+	}
+
+	var total int
+	err = db.QueryRow(`SELECT COUNT(*) FROM demo`).Scan(&total)
+	if err != nil {
+		t.Errorf("Final count query error: %v", err)
+	}
+	if total != iterations {
+		t.Errorf("Expected %d rows, got %d", iterations, total)
+	}
+}
+
+var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func randSeq(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
+	return string(b)
 }
