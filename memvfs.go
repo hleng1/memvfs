@@ -1,7 +1,6 @@
 package memvfs
 
 import (
-	"bytes"
 	"errors"
 	"sync"
 
@@ -11,7 +10,7 @@ import (
 
 type MemVFS struct {
 	mu    sync.Mutex
-	files map[string]*bytes.Buffer
+	files map[string][]byte
 }
 
 type MemFile struct {
@@ -23,41 +22,42 @@ type MemFile struct {
 
 func New() *MemVFS {
 	return &MemVFS{
-		files: make(map[string]*bytes.Buffer),
+		files: make(map[string][]byte),
 	}
 }
 
-// getFile returns an existing buffer for the given fileName
-// or creates a new buffer if it doesn’t exist yet.
-func (v *MemVFS) getFile(fileName string) *bytes.Buffer {
+// getFile returns an existing []byte for the given fileName
+// or creates a new zero-length slice if it doesn’t exist yet.
+func (v *MemVFS) getFile(fileName string) []byte {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	buf, ok := v.files[fileName]
+
+	data, ok := v.files[fileName]
 	if !ok {
-		buf = new(bytes.Buffer)
-		v.files[fileName] = buf
+		data = []byte{}
+		v.files[fileName] = data
 	}
-	return buf
+	return data
 }
 
 func (v *MemVFS) GetFile(fileName string) ([]byte, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	buf, ok := v.files[fileName]
+	data, ok := v.files[fileName]
 	if !ok {
 		return nil, errors.New("file not found in memvfs")
 	}
 
-	return buf.Bytes(), nil
+	return data, nil
 }
 
 func (f *MemFile) ReadAt(p []byte, off int64) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	buf := f.store.getFile(f.fileName)
-	fileLen := int64(buf.Len())
+	data := f.store.getFile(f.fileName)
+	fileLen := int64(len(data))
 
 	// If xRead() returns SQLITE_IOERR_SHORT_READ it must also fill in the
 	// unread portions of the buffer with zeros. A VFS that fails to
@@ -69,40 +69,49 @@ func (f *MemFile) ReadAt(p []byte, off int64) (int, error) {
 		for i := range p {
 			p[i] = 0
 		}
+
 		return len(p), sqlite3vfs.IOErrorShortRead
 	}
 
-	maxReadable := fileLen - off
-	if int64(len(p)) > maxReadable {
-		n := copy(p, buf.Bytes()[off:])
+	end := off + int64(len(p))
+	if end > fileLen {
+		n := copy(p, data[off:fileLen])
 		for i := n; i < len(p); i++ {
 			p[i] = 0
 		}
 		return len(p), sqlite3vfs.IOErrorShortRead
 	}
 
-	n := copy(p, buf.Bytes()[off:off+int64(len(p))])
-	return n, nil
+	copy(p, data[off:end])
+	return len(p), nil
 }
 
-func (f *MemFile) WriteAt(p []byte, off int64) (n int, err error) {
+func (f *MemFile) WriteAt(p []byte, off int64) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	fileBuf := f.store.getFile(f.fileName)
+	v := f.store
+	v.mu.Lock()
+	defer v.mu.Unlock()
 
-	currLen := int64(fileBuf.Len())
-	if off > currLen {
-		padding := make([]byte, off-currLen)
-		fileBuf.Write(padding)
+	data := v.files[f.fileName]
+	oldLen := int64(len(data))
+	newEnd := off + int64(len(p))
+
+	if newEnd < 0 {
+		return 0, errors.New("negative offset + length")
 	}
 
-	data := fileBuf.Bytes()
-	newData := make([]byte, off+int64(len(p)))
-	copy(newData, data)
-	copy(newData[off:], p)
-	fileBuf.Reset()
-	fileBuf.Write(newData)
+	if newEnd > oldLen {
+		newData := make([]byte, newEnd)
+		copy(newData, data)
+		copy(newData[off:], p)
+
+		v.files[f.fileName] = newData
+	} else {
+		copy(data[off:], p)
+		v.files[f.fileName] = data
+	}
 
 	return len(p), nil
 }
@@ -111,13 +120,19 @@ func (f *MemFile) Truncate(size int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	buf := f.store.getFile(f.fileName)
-	currentLen := int64(buf.Len())
+	v := f.store
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	data := v.files[f.fileName]
+	currentLen := int64(len(data))
+
 	if size < currentLen {
-		buf.Truncate(int(size))
+		v.files[f.fileName] = data[:size]
 	} else if size > currentLen {
-		padding := make([]byte, size-currentLen)
-		buf.Write(padding)
+		newData := make([]byte, size)
+		copy(newData, data)
+		v.files[f.fileName] = newData
 	}
 	return nil
 }
@@ -129,8 +144,13 @@ func (f *MemFile) Sync(flags sqlite3vfs.SyncType) error {
 func (f *MemFile) FileSize() (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	buf := f.store.getFile(f.fileName)
-	return int64(buf.Len()), nil
+
+	v := f.store
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	data := v.files[f.fileName]
+	return int64(len(data)), nil
 }
 
 func (f *MemFile) Lock(lockType sqlite3vfs.LockType) error {
@@ -177,24 +197,22 @@ func (v *MemVFS) Open(name string, flags sqlite3vfs.OpenFlag) (sqlite3vfs.File, 
 func (v *MemVFS) Delete(name string, syncDir bool) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if _, ok := v.files[name]; ok {
-		delete(v.files, name)
-		return nil
-	}
 
+	delete(v.files, name)
 	return nil
 }
 
 // Access tests for access permission. Returns true if the requested permission
-// is available. An error is returned only if the file's existance cannot be determined.
+// is available. An error is returned only if the file's existance cannot be
+// determined.
 //
 // https://github.com/psanford/sqlite3vfs/blob/24e1d98cf361/sqlite3vfscgo.go#L85C20-L87C53
 // https://www.sqlite.org/c3ref/c_access_exists.html
 func (v *MemVFS) Access(name string, flag sqlite3vfs.AccessFlag) (bool, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	_, ok := v.files[name]
 
+	_, ok := v.files[name]
 	return ok, nil
 }
 
